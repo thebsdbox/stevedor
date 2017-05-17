@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path"
 
 	"github.com/vmware/govmomi"
 	"github.com/vmware/govmomi/find"
@@ -116,22 +117,26 @@ func main() {
 		exit(err)
 	}
 
-	log.Infof("Uploading LinuxKit ISO")
-	if *isoPath == "" {
-		log.Fatalf("no iso path specified")
-	}
-	dsurl := dss.NewURL(fmt.Sprintf("%s/%s", *vmName, "linuxKit.iso"))
-
-	p := soap.DefaultUpload
-	if err = c.Client.UploadFile(*isoPath, dsurl, &p); err != nil {
-		exit(err)
-	}
-
 	// Retrieve the new VM
 	vm := object.NewVirtualMachine(c.Client, info.Result.(types.ManagedObjectReference))
 
+	uploadFile(c, isoPath, dss)
 	addISO(ctx, vm, dss)
 
+}
+
+func uploadFile(c *govmomi.Client, localFilePath *string, dss *object.Datastore) {
+	_, fileName := path.Split(*localFilePath)
+	log.Infof("Uploading LinuxKit ISO")
+	if *localFilePath == "" {
+		log.Fatalf("no iso path specified")
+	}
+	dsurl := dss.NewURL(fmt.Sprintf("%s/%s", *vmName, fileName))
+
+	p := soap.DefaultUpload
+	if err := c.Client.UploadFile(*localFilePath, dsurl, &p); err != nil {
+		exit(err)
+	}
 }
 
 func addISO(ctx context.Context, vm *object.VirtualMachine, dss *object.Datastore) {
