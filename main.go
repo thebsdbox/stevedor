@@ -24,6 +24,7 @@ var diskPath = flag.String("disk", "", "Specify the path to the VMware VMDK file
 var dsName = flag.String("datastore", "", "The Name of the DataStore to host the VM")
 var networkName = flag.String("network", os.Getenv("VMNETWORK"), "The VMware vSwitch the VM will use")
 var hostname = flag.String("hostname", os.Getenv("VMHOST"), "The Server that will run the VM")
+var persistent = flag.Int64("persistentSize", 0, "Size in MB of persistent storage to allocate to the VM")
 
 func exit(err error) {
 	fmt.Fprintf(os.Stderr, "Error: %s\n", err)
@@ -129,7 +130,13 @@ func main() {
 	if *diskPath != "" {
 		uploadFile(c, diskPath, dss)
 		_, vmdkName := path.Split(*diskPath)
-		addVMDK(ctx, vm, dss, vmdkName)
+		addVMDK(ctx, vm, dss, vmdkName, 1024)
+	}
+
+	if *persistent != 0 {
+		if *diskPath != "linuxkit.vmdk" {
+			addVMDK(ctx, vm, dss, "linuxkit.vmdk", *persistent)
+		}
 	}
 
 }
@@ -148,7 +155,7 @@ func uploadFile(c *govmomi.Client, localFilePath *string, dss *object.Datastore)
 	}
 }
 
-func addVMDK(ctx context.Context, vm *object.VirtualMachine, dss *object.Datastore, vmdkName string) {
+func addVMDK(ctx context.Context, vm *object.VirtualMachine, dss *object.Datastore, vmdkName string, sizeInMB int64) {
 	devices, err := vm.Device(ctx)
 	if err != nil {
 		exit(err)
@@ -162,6 +169,8 @@ func addVMDK(ctx context.Context, vm *object.VirtualMachine, dss *object.Datasto
 
 	disk := devices.CreateDisk(controller, dss.Reference(),
 		dss.Path(fmt.Sprintf("%s/%s", *vmName, vmdkName)))
+
+	disk.CapacityInKB = sizeInMB * 1024
 
 	add = append(add, disk)
 
