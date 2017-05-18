@@ -17,14 +17,17 @@ import (
 	log "github.com/Sirupsen/logrus"
 )
 
-var urlFlag = flag.String("url", os.Getenv("STEVEDOR_URL"), "https://username:password@host/sdk")
-var vmName = flag.String("vmname", "", "Specify a name for virtual Machine")
-var isoPath = flag.String("iso", "", "Specify the path to the VM ISO")
-var diskPath = flag.String("disk", "", "Specify the path to the VMware VMDK file")
-var dsName = flag.String("datastore", "", "The Name of the DataStore to host the VM")
-var networkName = flag.String("network", os.Getenv("VMNETWORK"), "The VMware vSwitch the VM will use")
-var hostname = flag.String("hostname", os.Getenv("VMHOST"), "The Server that will run the VM")
-var persistent = flag.Int64("persistentSize", 0, "Size in MB of persistent storage to allocate to the VM")
+type vmConfig struct {
+	vCenterURL  *string
+	dsName      *string
+	networkName *string
+	vSphereHost *string
+
+	vmName     *string
+	isoPath    *string
+	diskPath   *string
+	persistent *int64
+}
 
 func exit(err error) {
 	fmt.Fprintf(os.Stderr, "Error: %s\n", err)
@@ -35,10 +38,21 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	var newVM vmConfig
+
+	newVM.vCenterURL = flag.String("url", os.Getenv("STEVEDOR_URL"), "https://username:password@host/sdk")
+	newVM.vmName = flag.String("vmname", "", "Specify a name for virtual Machine")
+	newVM.isoPath = flag.String("iso", "", "Specify the path to the VM ISO")
+	newVM.diskPath = flag.String("disk", "", "Specify the path to the VMware VMDK file")
+	newVM.dsName = flag.String("datastore", "", "The Name of the DataStore to host the VM")
+	newVM.networkName = flag.String("network", os.Getenv("VMNETWORK"), "The VMware vSwitch the VM will use")
+	newVM.vSphereHost = flag.String("hostname", os.Getenv("VMHOST"), "The Server that will run the VM")
+	newVM.persistent = flag.Int64("persistentSize", 0, "Size in MB of persistent storage to allocate to the VM")
+
 	flag.Parse()
 
 	// Parse URL from string
-	u, err := url.Parse(*urlFlag)
+	u, err := url.Parse(*newVM.vCenterURL)
 	if err != nil {
 		exit(err)
 	}
@@ -60,17 +74,17 @@ func main() {
 	// Make future calls local to this datacenter
 	f.SetDatacenter(dc)
 
-	dss, err := f.DatastoreOrDefault(ctx, *dsName)
+	dss, err := f.DatastoreOrDefault(ctx, *newVM.dsName)
 	if err != nil {
 		exit(err)
 	}
 
-	net, err := f.NetworkOrDefault(ctx, *networkName)
+	net, err := f.NetworkOrDefault(ctx, *newVM.networkName)
 	if err != nil {
 		exit(err)
 	}
 
-	hs, err := f.HostSystemOrDefault(ctx, *hostname)
+	hs, err := f.HostSystemOrDefault(ctx, *newVM.vSphereHost)
 	if err != nil {
 		exit(err)
 	}
@@ -81,12 +95,8 @@ func main() {
 		exit(err)
 	}
 
-	if *vmName == "" {
-		*vmName = "default"
-	}
-
 	spec := types.VirtualMachineConfigSpec{
-		Name:     *vmName,
+		Name:     *newVM.vmName,
 		GuestId:  "otherLinux64Guest",
 		Files:    &types.VirtualMachineFileInfo{VmPathName: fmt.Sprintf("[%s]", dss.Name())},
 		NumCPUs:  int32(1),
@@ -122,41 +132,40 @@ func main() {
 	// Retrieve the new VM
 	vm := object.NewVirtualMachine(c.Client, info.Result.(types.ManagedObjectReference))
 
-	if *isoPath != "" {
-		uploadFile(c, isoPath, dss)
-		addISO(ctx, vm, dss)
+	if *newVM.isoPath != "" {
+		uploadFile(c, newVM, dss)
+		addISO(ctx, newVM, vm, dss)
 	}
 
-	if *diskPath != "" {
-		uploadFile(c, diskPath, dss)
-		_, vmdkName := path.Split(*diskPath)
-		addVMDK(ctx, vm, dss, vmdkName, 1024)
+	if *newVM.diskPath != "" {
+		uploadFile(c, newVM, dss)
+		addVMDK(ctx, vm, dss, newVM)
 	}
 
-	if *persistent != 0 {
-		if *diskPath != "linuxkit.vmdk" {
-			addVMDK(ctx, vm, dss, "linuxkit.vmdk", *persistent)
+	if *newVM.persistent != 0 {
+		if *newVM.diskPath != "linuxkit.vmdk" {
+			addVMDK(ctx, vm, dss, newVM)
 		} else {
 			log.Errorf("Can not create persisten disk with identical name to existing VMDK disk")
 		}
 	}
 
-	if *networkName != "" {
+	if *newVM.networkName != "" {
 		addNIC(ctx, vm, net)
 	}
 
 }
 
-func uploadFile(c *govmomi.Client, localFilePath *string, dss *object.Datastore) {
-	_, fileName := path.Split(*localFilePath)
-	log.Infof("Uploading LinuxKit file [%s]", *localFilePath)
-	if *localFilePath == "" {
+func uploadFile(c *govmomi.Client, newVM vmConfig, dss *object.Datastore) {
+	_, fileName := path.Split(*newVM.isoPath)
+	log.Infof("Uploading LinuxKit file [%s]", *newVM.isoPath)
+	if *newVM.isoPath == "" {
 		log.Fatalf("No file specified")
 	}
-	dsurl := dss.NewURL(fmt.Sprintf("%s/%s", *vmName, fileName))
+	dsurl := dss.NewURL(fmt.Sprintf("%s/%s", *newVM.vmName, fileName))
 
 	p := soap.DefaultUpload
-	if err := c.Client.UploadFile(*localFilePath, dsurl, &p); err != nil {
+	if err := c.Client.UploadFile(*newVM.isoPath, dsurl, &p); err != nil {
 		exit(err)
 	}
 }
@@ -182,7 +191,7 @@ func addNIC(ctx context.Context, vm *object.VirtualMachine, net object.NetworkRe
 	}
 }
 
-func addVMDK(ctx context.Context, vm *object.VirtualMachine, dss *object.Datastore, vmdkName string, sizeInMB int64) {
+func addVMDK(ctx context.Context, vm *object.VirtualMachine, dss *object.Datastore, newVM vmConfig) {
 	devices, err := vm.Device(ctx)
 	if err != nil {
 		exit(err)
@@ -193,10 +202,11 @@ func addVMDK(ctx context.Context, vm *object.VirtualMachine, dss *object.Datasto
 		exit(err)
 	}
 
+	_, vmdkName := path.Split(*newVM.diskPath)
 	disk := devices.CreateDisk(controller, dss.Reference(),
-		dss.Path(fmt.Sprintf("%s/%s", *vmName, vmdkName)))
+		dss.Path(fmt.Sprintf("%s/%s", *newVM.vmName, vmdkName)))
 
-	disk.CapacityInKB = sizeInMB * 1024
+	disk.CapacityInKB = *newVM.persistent * 1024
 
 	var add []types.BaseVirtualDevice
 	add = append(add, disk)
@@ -208,7 +218,7 @@ func addVMDK(ctx context.Context, vm *object.VirtualMachine, dss *object.Datasto
 	}
 }
 
-func addISO(ctx context.Context, vm *object.VirtualMachine, dss *object.Datastore) {
+func addISO(ctx context.Context, newVM vmConfig, vm *object.VirtualMachine, dss *object.Datastore) {
 	devices, err := vm.Device(ctx)
 	if err != nil {
 		exit(err)
@@ -225,7 +235,7 @@ func addISO(ctx context.Context, vm *object.VirtualMachine, dss *object.Datastor
 	}
 
 	var add []types.BaseVirtualDevice
-	add = append(add, devices.InsertIso(cdrom, dss.Path(fmt.Sprintf("%s/%s", *vmName, "linuxkit.iso"))))
+	add = append(add, devices.InsertIso(cdrom, dss.Path(fmt.Sprintf("%s/%s", *newVM.vmName, "linuxkit.iso"))))
 
 	log.Infof("Adding ISO to the Virtual Machine")
 
