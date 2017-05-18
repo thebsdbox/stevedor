@@ -20,6 +20,7 @@ import (
 var urlFlag = flag.String("url", os.Getenv("STEVEDOR_URL"), "https://username:password@host/sdk")
 var vmName = flag.String("vmname", "", "Specify a name for virtual Machine")
 var isoPath = flag.String("iso", "", "Specify the path to the VM ISO")
+var diskPath = flag.String("disk", "", "Specify the path to the VMware VMDK file")
 var dsName = flag.String("datastore", "", "The Name of the DataStore to host the VM")
 var networkName = flag.String("network", os.Getenv("VMNETWORK"), "The VMware vSwitch the VM will use")
 var hostname = flag.String("hostname", os.Getenv("VMHOST"), "The Server that will run the VM")
@@ -120,8 +121,16 @@ func main() {
 	// Retrieve the new VM
 	vm := object.NewVirtualMachine(c.Client, info.Result.(types.ManagedObjectReference))
 
-	uploadFile(c, isoPath, dss)
-	addISO(ctx, vm, dss)
+	if *isoPath != "" {
+		uploadFile(c, isoPath, dss)
+		addISO(ctx, vm, dss)
+	}
+
+	if *diskPath != "" {
+		uploadFile(c, diskPath, dss)
+		_, vmdkName := path.Split(*diskPath)
+		addVMDK(ctx, vm, dss, vmdkName)
+	}
 
 }
 
@@ -135,6 +144,30 @@ func uploadFile(c *govmomi.Client, localFilePath *string, dss *object.Datastore)
 
 	p := soap.DefaultUpload
 	if err := c.Client.UploadFile(*localFilePath, dsurl, &p); err != nil {
+		exit(err)
+	}
+}
+
+func addVMDK(ctx context.Context, vm *object.VirtualMachine, dss *object.Datastore, vmdkName string) {
+	devices, err := vm.Device(ctx)
+	if err != nil {
+		exit(err)
+	}
+	var add []types.BaseVirtualDevice
+
+	controller, err := devices.FindDiskController("scsi")
+	if err != nil {
+		exit(err)
+	}
+
+	disk := devices.CreateDisk(controller, dss.Reference(),
+		dss.Path(fmt.Sprintf("%s/%s", *vmName, vmdkName)))
+
+	add = append(add, disk)
+
+	log.Infof("Adding the new Devices to the Virtual Machine")
+
+	if vm.AddDevice(ctx, add...); err != nil {
 		exit(err)
 	}
 }
