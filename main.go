@@ -65,10 +65,10 @@ func main() {
 		exit(err)
 	}
 
-	// net, err := f.NetworkOrDefault(ctx, networkName)
-	// if err != nil {
-	// 	exit(err)
-	// }
+	net, err := f.NetworkOrDefault(ctx, *networkName)
+	if err != nil {
+		exit(err)
+	}
 
 	hs, err := f.HostSystemOrDefault(ctx, *hostname)
 	if err != nil {
@@ -103,7 +103,7 @@ func main() {
 		Device:    scsi,
 	})
 
-	log.Infof("Creating VM...")
+	log.Infof("Creating initial LinuxKit Virtual Machine")
 	folders, err := dc.Folders(ctx)
 	if err != nil {
 		exit(err)
@@ -141,6 +141,10 @@ func main() {
 		}
 	}
 
+	if *networkName != "" {
+		addNIC(ctx, vm, net)
+	}
+
 }
 
 func uploadFile(c *govmomi.Client, localFilePath *string, dss *object.Datastore) {
@@ -157,12 +161,32 @@ func uploadFile(c *govmomi.Client, localFilePath *string, dss *object.Datastore)
 	}
 }
 
+func addNIC(ctx context.Context, vm *object.VirtualMachine, net object.NetworkReference) {
+	backing, err := net.EthernetCardBackingInfo(ctx)
+	if err != nil {
+		exit(err)
+	}
+
+	netdev, err := object.EthernetCardTypes().CreateEthernetCard("vmxnet3", backing)
+	if err != nil {
+		exit(err)
+
+	}
+
+	log.Infof("Adding VM Networking")
+	var add []types.BaseVirtualDevice
+	add = append(add, netdev)
+
+	if vm.AddDevice(ctx, add...); err != nil {
+		exit(err)
+	}
+}
+
 func addVMDK(ctx context.Context, vm *object.VirtualMachine, dss *object.Datastore, vmdkName string, sizeInMB int64) {
 	devices, err := vm.Device(ctx)
 	if err != nil {
 		exit(err)
 	}
-	var add []types.BaseVirtualDevice
 
 	controller, err := devices.FindDiskController("scsi")
 	if err != nil {
@@ -174,6 +198,7 @@ func addVMDK(ctx context.Context, vm *object.VirtualMachine, dss *object.Datasto
 
 	disk.CapacityInKB = sizeInMB * 1024
 
+	var add []types.BaseVirtualDevice
 	add = append(add, disk)
 
 	log.Infof("Adding the new disk to the Virtual Machine")
@@ -188,7 +213,6 @@ func addISO(ctx context.Context, vm *object.VirtualMachine, dss *object.Datastor
 	if err != nil {
 		exit(err)
 	}
-	var add []types.BaseVirtualDevice
 
 	ide, err := devices.FindIDEController("")
 	if err != nil {
@@ -200,6 +224,7 @@ func addISO(ctx context.Context, vm *object.VirtualMachine, dss *object.Datastor
 		exit(err)
 	}
 
+	var add []types.BaseVirtualDevice
 	add = append(add, devices.InsertIso(cdrom, dss.Path(fmt.Sprintf("%s/%s", *vmName, "linuxkit.iso"))))
 
 	log.Infof("Adding ISO to the Virtual Machine")
