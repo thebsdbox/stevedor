@@ -136,6 +136,8 @@ func main() {
 	if *persistent != 0 {
 		if *diskPath != "linuxkit.vmdk" {
 			addVMDK(ctx, vm, dss, "linuxkit.vmdk", *persistent)
+		} else {
+			log.Errorf("Can not create persisten disk with identical name to existing VMDK disk")
 		}
 	}
 
@@ -143,9 +145,9 @@ func main() {
 
 func uploadFile(c *govmomi.Client, localFilePath *string, dss *object.Datastore) {
 	_, fileName := path.Split(*localFilePath)
-	log.Infof("Uploading LinuxKit ISO")
+	log.Infof("Uploading LinuxKit file [%s]", *localFilePath)
 	if *localFilePath == "" {
-		log.Fatalf("no iso path specified")
+		log.Fatalf("No file specified")
 	}
 	dsurl := dss.NewURL(fmt.Sprintf("%s/%s", *vmName, fileName))
 
@@ -174,7 +176,7 @@ func addVMDK(ctx context.Context, vm *object.VirtualMachine, dss *object.Datasto
 
 	add = append(add, disk)
 
-	log.Infof("Adding the new Devices to the Virtual Machine")
+	log.Infof("Adding the new disk to the Virtual Machine")
 
 	if vm.AddDevice(ctx, add...); err != nil {
 		exit(err)
@@ -198,9 +200,9 @@ func addISO(ctx context.Context, vm *object.VirtualMachine, dss *object.Datastor
 		exit(err)
 	}
 
-	add = append(add, devices.InsertIso(cdrom, dss.Path(fmt.Sprintf("%s/%s", *vmName, "linuxKit.iso"))))
+	add = append(add, devices.InsertIso(cdrom, dss.Path(fmt.Sprintf("%s/%s", *vmName, "linuxkit.iso"))))
 
-	log.Infof("Adding the new Devices to the Virtual Machine")
+	log.Infof("Adding ISO to the Virtual Machine")
 
 	if vm.AddDevice(ctx, add...); err != nil {
 		exit(err)
