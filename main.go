@@ -27,6 +27,8 @@ type vmConfig struct {
 	isoPath    *string
 	diskPath   *string
 	persistent *int64
+	vCpus      *int
+	mem        *int64
 }
 
 func exit(err error) {
@@ -48,6 +50,8 @@ func main() {
 	newVM.networkName = flag.String("network", os.Getenv("VMNETWORK"), "The VMware vSwitch the VM will use")
 	newVM.vSphereHost = flag.String("hostname", os.Getenv("VMHOST"), "The Server that will run the VM")
 	newVM.persistent = flag.Int64("persistentSize", 0, "Size in MB of persistent storage to allocate to the VM")
+	newVM.mem = flag.Int64("mem", 1024, "Size in MB of memory to allocate to the VM")
+	newVM.vCpus = flag.Int("cpus", 1, "Amount of vCPUs to allocate to the VM")
 
 	flag.Parse()
 
@@ -99,8 +103,8 @@ func main() {
 		Name:     *newVM.vmName,
 		GuestId:  "otherLinux64Guest",
 		Files:    &types.VirtualMachineFileInfo{VmPathName: fmt.Sprintf("[%s]", dss.Name())},
-		NumCPUs:  int32(1),
-		MemoryMB: int64(1024),
+		NumCPUs:  int32(*newVM.vCpus),
+		MemoryMB: *newVM.mem,
 	}
 
 	scsi, err := object.SCSIControllerTypes().CreateSCSIController("pvscsi")
